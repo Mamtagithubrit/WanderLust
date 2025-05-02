@@ -1,0 +1,120 @@
+if(process.env.NODE_ENV !="production"){
+  require('dotenv').config();
+}
+
+
+
+const express = require("express");
+const app = express();
+const mongoose = require("mongoose");
+const path = require("path");
+const methodOverride = require("method-override");
+const ejsMate = require("ejs-mate");
+const session = require("express-session");
+const flash = require("connect-flash");
+const passport = require("passport");
+const LocalStrategy = require("passport-local").Strategy;
+
+const ExpressError = require("./utils/ExpressError.js");
+const User = require("./models/user.js");
+const Review = require("./models/review.js");
+
+const listingRouter = require("./routes/listing.js");
+const reviewRouter = require("./routes/review.js");
+const userRouter = require("./routes/user.js");
+
+const MONGO_URL = "mongodb://127.0.0.1:27017/wanderlust";
+
+// Database connection
+main()
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch((err) => console.log("❌ DB Connection Error:", err));
+
+async function main() {
+  await mongoose.connect(MONGO_URL);
+}
+
+// View engine setup
+app.set("view engine", "ejs");
+app.set("views", path.join(__dirname, "views"));
+app.engine("ejs", ejsMate);
+
+// Middleware
+app.use(express.urlencoded({ extended: true }));//parse the urlencoded data from aur form
+app.use(methodOverride("_method"));
+app.use(express.static(path.join(__dirname, "public")));
+
+// Session config
+const sessionOptions = {
+  secret: "mysupersecretstring",
+  resave: false,
+  saveUninitialized: true,
+  cookie: {
+    expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    httpOnly: true,
+  },
+};
+
+app.use(session(sessionOptions));
+app.use(flash());
+
+// Passport config
+app.use(passport.initialize());
+app.use(passport.session());
+passport.use(new LocalStrategy(User.authenticate()));
+passport.serializeUser(User.serializeUser());
+passport.deserializeUser(User.deserializeUser());
+
+// Store return URL if user not logged in
+app.use((req, res, next) => {
+  if (!req.user && !["/login", "/signup"].includes(req.originalUrl)) {
+    req.session.redirectUrl = req.originalUrl;
+  }
+  next();
+});
+
+// Globals for views
+app.use((req, res, next) => {
+  res.locals.currUser = req.user;
+  res.locals.success = req.flash("success");
+  res.locals.error = req.flash("error");
+  next();
+});
+
+// Routes
+app.use("/listings", listingRouter);
+app.use("/listings/:id/reviews", reviewRouter);
+app.use("/", userRouter);
+
+// Flash test route
+app.get("/flashtest", (req, res) => {
+  req.flash("success", "Flash is working!");
+  res.redirect("/listings");
+});
+
+// Create demo user
+app.get("/demouser", async (req, res) => {
+  let fakeUser = new User({
+    email: "student@gmail.com",
+    username: "delta-student"
+  });
+  let registeredUser = await User.register(fakeUser, "Hello");
+  res.send(registeredUser);
+});
+
+// Error handler
+app.all("*", (req, res, next) => {
+  next(new ExpressError(404, "Page Not Found!"));
+});
+
+app.use((err, req, res, next) => {
+  const { statusCode = 500, message = "Something went wrong" } = err;
+  res.status(statusCode).render("listings/error.ejs", { message });
+});
+
+// Start server
+app.listen(8080, () => {
+  console.log("🚀 Server running on http://localhost:8080");
+});
+
